@@ -3,12 +3,9 @@
 
 import { useState, type FormEvent } from "react";
 import dynamic from "next/dynamic";
+import Image from "next/image";
+
 import SettingsPanel from "./SettingsPanel";
-import LoadingView from "./LoadingView";
-import ResultsView from "./ResultsView";
-import AnalysisFeedback, {
-  type AnalysisFeedbackType,
-} from "./AnalysisFeedback";
 
 const CodeEditor = dynamic(
   () => import("./CodeEditor"),
@@ -23,36 +20,13 @@ const CodeEditor = dynamic(
 );
 
 export default function AnalysisForm() {
-
-  // DADOS DA ENTRADA
-
   const [code, setCode] = useState("");
   const [question, setQuestion] = useState("");
-
-  // CONFIGURAÇÕES
 
   const [backend, setBackend] = useState("reference");
   const [topK, setTopK] = useState("5");
 
-  // CONTROLE DAS TELAS
-
-  const [showProcessingPreview, setShowProcessingPreview] =
-    useState(false);
-
-  const [showResultPreview, setShowResultPreview] =
-    useState(false);
-  
-  // CONTROLE DOS ESTADOS DE ERRO
-
-  const [feedbackType, setFeedbackType] =
-    useState<AnalysisFeedbackType | null>(null);
-
-  // CONTROLE DA VALIDAÇÃO DO FORMULÁRIO
-
-  const [showInputErrors, setShowInputErrors] =
-    useState(false);
-
-  // MENSAGENS
+  const [showInputErrors, setShowInputErrors] = useState(false);
 
   const [feedback, setFeedback] = useState<{
     type: "error";
@@ -60,8 +34,6 @@ export default function AnalysisForm() {
   } | null>(null);
 
   const [editorMessage, setEditorMessage] = useState("");
-
-  // EXEMPLOS
 
   const examples = [
     "Reduzir profundidade",
@@ -73,8 +45,6 @@ export default function AnalysisForm() {
     setQuestion(example);
     setFeedback(null);
   }
-
-  // COPIAR CÓDIGO
 
   async function handleCopy() {
     if (!code.trim()) {
@@ -92,8 +62,6 @@ export default function AnalysisForm() {
     }
   }
 
-  // COLAR CÓDIGO
-
   async function handlePaste() {
     try {
       const clipboardText = await navigator.clipboard.readText();
@@ -106,7 +74,7 @@ export default function AnalysisForm() {
       setCode(clipboardText);
       setEditorMessage("Código inserido!");
       setFeedback(null);
-
+      setShowInputErrors(false);
     } catch {
       setEditorMessage(
         "Não foi possível acessar a área de transferência. Utilize Ctrl+V."
@@ -114,154 +82,64 @@ export default function AnalysisForm() {
     }
   }
 
-  // LIMPAR
-
   function handleClear() {
     setCode("");
     setQuestion("");
-
     setBackend("reference");
     setTopK("5");
-
     setFeedback(null);
     setEditorMessage("");
-
-    setShowProcessingPreview(false);
-    setShowResultPreview(false);
-    setFeedbackType(null);
     setShowInputErrors(false);
   }
 
-  // INICIAR A PRÉVIA DE PROCESSAMENTO
+  function handleAnalyze(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
-  
-function handleAnalyze(event: FormEvent<HTMLFormElement>) {
-  event.preventDefault();
+    if (!code.trim() && !question.trim()) {
+      setShowInputErrors(true);
 
-  // Verifica se existe pergunta ou código
-  if (!code.trim() && !question.trim()) {
-    setShowInputErrors(true);
+      setFeedback({
+        type: "error",
+        message:
+          "Preencha o código, a pergunta ou os dois para continuar.",
+      });
 
-    setFeedback({
-      type: "error",
-      message:
-        "Falta informação para analisar. Preencha o código, a pergunta ou os dois.",
-    });
+      return;
+    }
 
-    return;
+    setShowInputErrors(false);
+    setFeedback(null);
   }
-
-  // Remove mensagens de validação
-  setShowInputErrors(false);
-  setFeedback(null);
-  setFeedbackType(null);
-
-  // Prepara a visualização do processamento
-  setShowResultPreview(false);
-  setShowProcessingPreview(true);
-}
-
-
-  // PRIMEIRO: MOSTRA RESULTADO
-
-
-// EXIBE OS CENÁRIOS DE ERRO
-
-  if (feedbackType) {
-    return (
-      <AnalysisFeedback
-        type={feedbackType}
-        code={code}
-        question={question}
-        requestId="req-demo-125"
-        errorLine={5}
-        onBack={() => {
-          setFeedbackType(null);
-          setShowProcessingPreview(false);
-          setShowResultPreview(false);
-        }}
-        onRetry={() => {
-          setFeedbackType(null);
-          setShowProcessingPreview(true);
-          setShowResultPreview(false);
-        }}
-      />
-    );
-  }
-
-  if (showResultPreview) {
-    return (
-      <ResultsView
-        code={code}
-        question={question}
-        onBack={() => {
-          setShowResultPreview(false);
-          setShowProcessingPreview(false);
-        }}
-      />
-    );
-  }
-
-  // SEGUNDO: MOSTRA PROCESSAMENTO
-
-  if (showProcessingPreview) {
-    return (
-      <LoadingView
-        code={code}
-        question={question}
-        backend={backend}
-        topK={topK}
-        
-        onBack={() => setShowProcessingPreview(false)}
-        
-        onShowDemoResult={() => {
-          setFeedbackType(null);
-          setShowProcessingPreview(false);
-          setShowResultPreview(true);
-        }}
-
-        onShowError={(type) => {
-          setFeedbackType(type);
-          setShowProcessingPreview(false);
-          setShowResultPreview(false);
-        }}
-      />
-    );
-  }
-
-  // TERCEIRO: MOSTRA ENTRADA
 
   return (
     <>
       <header className="topbar">
-
         <div className="topbar-inner">
-
           <div className="brand">
-
-            <div className="brand-symbol">
-              Q
-            </div>
-
-            <div className="brand-copy">
-              <strong>Agente RAG</strong>
-              <span>Otimização de código</span>
-            </div>
-
+            <Image
+              src="/images/logo.png"
+              alt="Identidade visual do projeto Agente RAG"
+              width={240}
+              height={90}
+              priority
+              style={{
+                display: "block",
+                width: "220px",
+                height: "auto",
+                maxHeight: "76px",
+                objectFit: "contain",
+              }}
+            />
           </div>
 
           <div className="topbar-label">
             Qiskit · Next-Gen Computing
           </div>
-
         </div>
-
       </header>
 
       <main className="workspace">
-
         <section className="page-intro">
-
           <div>
             <span className="eyebrow">
               ÁREA DE TRABALHO
@@ -270,11 +148,10 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
             <h1>Nova análise</h1>
 
             <p>
-              Cole seu código Qiskit, diga o que deseja entender
+              Cole seu código OpenQASM 2, diga o que deseja entender
               ou melhorar e receba uma análise com fontes.
             </p>
           </div>
-
         </section>
 
         <form
@@ -282,15 +159,10 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
           onSubmit={handleAnalyze}
           noValidate
         >
-
-          {/* EDITOR */}
-
           <section className="panel">
-
             <div className="panel-heading">
-
               <div>
-                <h2>Código Qiskit</h2>
+                <h2>Código OpenQASM 2</h2>
 
                 <span>
                   Insira o código que deseja analisar.
@@ -298,7 +170,6 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
               </div>
 
               <div className="toolbar-actions">
-
                 <button
                   type="button"
                   className="button-quiet"
@@ -314,23 +185,20 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
                 >
                   Copiar
                 </button>
-
               </div>
-
             </div>
 
-            <div 
-                className={`editor-shell ${
-                  showInputErrors ? "input-invalid" : ""
-                }`}
-                >
-
+            <div
+              className={`editor-shell ${
+                showInputErrors ? "input-invalid" : ""
+              }`}
+            >
               <div className="editor-toolbar">
                 <span className="language-label">
-                  PYTHON
+                  OPENQASM 2
                 </span>
 
-                <span>Qiskit</span>
+                <span>OpenQASM</span>
               </div>
 
               <CodeEditor
@@ -339,17 +207,16 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
                   setCode(value);
                   setEditorMessage("");
 
-              if (value.trim()) {
-                  setShowInputErrors(false);
-                  setFeedback(null);
-               }
-              }}
+                  if (value.trim()) {
+                    setShowInputErrors(false);
+                    setFeedback(null);
+                  }
+                }}
               />
-
             </div>
 
             <div className="editor-footer">
-              <span>Editor de código Python</span>
+              <span>Editor de código OpenQASM 2</span>
               <span>{code.length} caracteres</span>
             </div>
 
@@ -358,15 +225,10 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
                 {editorMessage}
               </p>
             )}
-
           </section>
 
-          {/* PERGUNTA E CONFIGURAÇÕES */}
-
           <section className="panel side-panel">
-
             <div className="field-group">
-
               <label htmlFor="analysis-question">
                 Pergunta / objetivo
               </label>
@@ -381,25 +243,21 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
                 onChange={(event) => {
                   setQuestion(event.target.value);
                   setFeedback(null);
-                  
-                if (event.target.value.trim()) {
-                  setShowInputErrors(false);
-                  setFeedback(null);
-                }
+
+                  if (event.target.value.trim()) {
+                    setShowInputErrors(false);
+                  }
                 }}
                 placeholder="O que você gostaria de entender ou melhorar?"
               />
-
             </div>
 
             <div className="examples-section">
-
               <span className="section-label">
                 EXEMPLOS DE OBJETIVO
               </span>
 
               <div className="example-list">
-
                 {examples.map((example) => (
                   <button
                     key={example}
@@ -410,9 +268,7 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
                     {example}
                   </button>
                 ))}
-
               </div>
-
             </div>
 
             <SettingsPanel
@@ -423,7 +279,6 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
             />
 
             <div className="form-actions">
-
               <button
                 type="submit"
                 className="button-primary"
@@ -439,15 +294,12 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
               >
                 Limpar tudo
               </button>
-
             </div>
 
             <p className="form-hint">
               Preencha ao menos a pergunta ou o código.
             </p>
-
           </section>
-
         </form>
 
         {feedback && (
@@ -463,7 +315,6 @@ function handleAnalyze(event: FormEvent<HTMLFormElement>) {
           Agente RAG · Qiskit — Ferramenta de apoio ao
           desenvolvimento quântico.
         </footer>
-
       </main>
     </>
   );

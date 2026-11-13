@@ -16,14 +16,10 @@ export default function SettingsPanel({
   onBackendChange,
   onTopKChange,
 }: SettingsPanelProps) {
-  // Controla se as configurações estão abertas
   const [isExpanded, setIsExpanded] = useState(true);
 
   return (
     <section className="settings-panel">
-
-      {/* CABEÇALHO DAS CONFIGURAÇÕES */}
-
       <button
         type="button"
         className="settings-toggle"
@@ -46,22 +42,17 @@ export default function SettingsPanel({
       </button>
 
       <p className="settings-description">
-        Personalize os parâmetros utilizados na análise.
+        Configure os parâmetros de recuperação e análise.
       </p>
-
-      {/* CONTEÚDO EXPANSÍVEL */}
 
       <div
         id="advanced-settings"
         className="settings-content"
         hidden={!isExpanded}
       >
-
-        {/* SELEÇÃO DO BACKEND */}
-
         <div className="field-group">
           <label htmlFor="backend">
-            Backend
+            Backend de destino
           </label>
 
           <select
@@ -81,11 +72,9 @@ export default function SettingsPanel({
           </span>
         </div>
 
-        {/* QUANTIDADE DE TRECHOS */}
-
         <div className="field-group">
           <label htmlFor="top-k">
-            Trechos recuperados (top_k)
+            Quantidade de trechos (top_k)
           </label>
 
           <select
@@ -102,13 +91,11 @@ export default function SettingsPanel({
           </select>
 
           <span className="field-help">
-            Quantidade de fragmentos da documentação
+            Quantidade máxima de fragmentos documentais
             que o sistema tentará recuperar.
           </span>
         </div>
-
       </div>
-
     </section>
   );
 }

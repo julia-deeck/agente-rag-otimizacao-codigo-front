@@ -3,7 +3,6 @@
 
 import { useEffect, useState } from "react";
 
-// Informações de cada fonte
 export type SourceDetails = {
   id: string;
   title: string;
@@ -15,7 +14,6 @@ export type SourceDetails = {
   url?: string | null;
 };
 
-// Informações recebidas pelo componente
 type SourceDrawerProps = {
   source: SourceDetails | null;
   onClose: () => void;
@@ -25,10 +23,8 @@ export default function SourceDrawer({
   source,
   onClose,
 }: SourceDrawerProps) {
-
   const [copyMessage, setCopyMessage] = useState("");
 
-  // Controla a tecla ESC e a rolagem do fundo
   useEffect(() => {
     if (!source) return;
 
@@ -41,23 +37,22 @@ export default function SourceDrawer({
     }
 
     document.addEventListener("keydown", handleKeyDown);
-
     document.body.style.overflow = "hidden";
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-
       document.body.style.overflow = previousOverflow;
     };
-
   }, [source, onClose]);
 
-  // Se nenhuma fonte foi selecionada, não mostra o painel
+  useEffect(() => {
+    setCopyMessage("");
+  }, [source]);
+
   if (!source) {
     return null;
   }
 
-  // Copia as informações da fonte
   async function handleCopyReference() {
     const reference = [
       source.title,
@@ -65,13 +60,14 @@ export default function SourceDrawer({
       `Categoria: ${source.category}`,
       `Tipo: ${source.type}`,
       `Trecho: ${source.excerpt}`,
-    ].join("\n");
+      source.url ? `Link: ${source.url}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     try {
       await navigator.clipboard.writeText(reference);
-
       setCopyMessage("Referência copiada com sucesso!");
-
     } catch {
       setCopyMessage(
         "Não foi possível copiar automaticamente. Tente selecionar o texto."
@@ -84,7 +80,6 @@ export default function SourceDrawer({
       className="source-drawer-overlay"
       onClick={onClose}
     >
-
       <aside
         id="source-detail-drawer"
         className="source-drawer"
@@ -93,11 +88,7 @@ export default function SourceDrawer({
         aria-labelledby="source-drawer-title"
         onClick={(event) => event.stopPropagation()}
       >
-
-        {/* CABEÇALHO */}
-
         <div className="source-drawer-header">
-
           <div>
             <span className="eyebrow">
               DETALHES DA FONTE
@@ -116,13 +107,9 @@ export default function SourceDrawer({
           >
             ×
           </button>
-
         </div>
 
-        {/* TÍTULO */}
-
         <section className="drawer-section">
-
           <span className="drawer-label">
             TÍTULO
           </span>
@@ -130,19 +117,14 @@ export default function SourceDrawer({
           <h3 className="drawer-source-title">
             {source.title}
           </h3>
-
         </section>
 
-        {/* METADADOS */}
-
         <section className="drawer-section">
-
           <span className="drawer-label">
             ORIGEM E CLASSIFICAÇÃO
           </span>
 
           <div className="source-metadata-grid">
-
             <div className="metadata-item">
               <span>Origem</span>
               <strong>{source.origin}</strong>
@@ -157,15 +139,10 @@ export default function SourceDrawer({
               <span>Tipo</span>
               <strong>{source.type}</strong>
             </div>
-
           </div>
-
         </section>
 
-        {/* TRECHO RECUPERADO */}
-
         <section className="drawer-section">
-
           <span className="drawer-label">
             TRECHO RECUPERADO
           </span>
@@ -173,21 +150,11 @@ export default function SourceDrawer({
           <div className="source-excerpt">
             <p>{source.excerpt}</p>
           </div>
-
-          <span className="drawer-disclaimer">
-            A visualização apresentada é demonstrativa.
-            O trecho não foi recuperado de uma consulta
-            real ao ChromaDB.
-          </span>
-
         </section>
 
-        {/* RELAÇÃO COM A SUGESTÃO */}
-
         <section className="drawer-section">
-
           <span className="drawer-label">
-            ESTA FONTE SUSTENTA
+            RELAÇÃO COM A ANÁLISE
           </span>
 
           <div className="source-relationship">
@@ -195,17 +162,13 @@ export default function SourceDrawer({
           </div>
 
           <p className="drawer-warning">
-            A existência de uma referência documental
-            não garante que o código sugerido funcione.
-            É necessária validação técnica.
+            A existência de uma referência documental não
+            garante que o código sugerido funcione. É necessária
+            validação técnica.
           </p>
-
         </section>
 
-        {/* LINK DA DOCUMENTAÇÃO */}
-
         <section className="drawer-section">
-
           <span className="drawer-label">
             LINK DA DOCUMENTAÇÃO
           </span>
@@ -220,34 +183,22 @@ export default function SourceDrawer({
               {source.url}
             </a>
           ) : (
-            <div className="source-link-unavailable">
-              Link indisponível na demonstração.
-            </div>
+            <p>
+              Nenhum link foi disponibilizado para esta fonte.
+            </p>
           )}
-
         </section>
 
-        {/* RODAPÉ E AÇÕES */}
-
         <div className="source-drawer-actions">
-
-          {source.url ? (
+          {source.url && (
             <a
               href={source.url}
               target="_blank"
               rel="noopener noreferrer"
               className="button-primary drawer-action-link"
             >
-              Abrir documentação ↗
+              Abrir documentação
             </a>
-          ) : (
-            <button
-              type="button"
-              className="button-secondary"
-              disabled
-            >
-              Documentação indisponível
-            </button>
           )}
 
           <button
@@ -263,11 +214,8 @@ export default function SourceDrawer({
               {copyMessage}
             </p>
           )}
-
         </div>
-
       </aside>
-
     </div>
   );
 }
