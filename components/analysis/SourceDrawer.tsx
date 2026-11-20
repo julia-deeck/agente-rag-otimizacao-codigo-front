@@ -1,4 +1,4 @@
-
+﻿
 "use client";
 
 import { useEffect, useState } from "react";
@@ -23,7 +23,8 @@ export default function SourceDrawer({
   source,
   onClose,
 }: SourceDrawerProps) {
-  const [copyMessage, setCopyMessage] = useState("");
+  const [copyResult, setCopyResult] = useState<{ sourceId: string; message: string } | null>(null);
+  const copyMessage = source && copyResult?.sourceId === source.id ? copyResult.message : "";
 
   useEffect(() => {
     if (!source) return;
@@ -45,33 +46,29 @@ export default function SourceDrawer({
     };
   }, [source, onClose]);
 
-  useEffect(() => {
-    setCopyMessage("");
-  }, [source]);
-
   if (!source) {
     return null;
   }
 
+  const currentSource = source;
+
   async function handleCopyReference() {
     const reference = [
-      source.title,
-      source.origin,
-      `Categoria: ${source.category}`,
-      `Tipo: ${source.type}`,
-      `Trecho: ${source.excerpt}`,
-      source.url ? `Link: ${source.url}` : "",
+      currentSource.title,
+      currentSource.origin,
+      `Categoria: ${currentSource.category}`,
+      `Tipo: ${currentSource.type}`,
+      `Trecho: ${currentSource.excerpt}`,
+      currentSource.url ? `Link: ${currentSource.url}` : "",
     ]
       .filter(Boolean)
       .join("\n");
 
     try {
       await navigator.clipboard.writeText(reference);
-      setCopyMessage("Referência copiada com sucesso!");
+      setCopyResult({ sourceId: currentSource.id, message: "Referência copiada com sucesso!" });
     } catch {
-      setCopyMessage(
-        "Não foi possível copiar automaticamente. Tente selecionar o texto."
-      );
+      setCopyResult({ sourceId: currentSource.id, message: "Não foi possível copiar automaticamente. Tente selecionar o texto." });
     }
   }
 
