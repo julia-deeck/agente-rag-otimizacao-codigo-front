@@ -1,6 +1,9 @@
 
 "use client";
 
+import AppFrame from "../layout/AppFrame";
+import AppHeader from "../layout/AppHeader";
+
 export type AnalysisFeedbackType =
   | "invalid-code"
   | "insufficient-evidence"
@@ -59,23 +62,9 @@ export default function AnalysisFeedback({
   }
 
   return (
+    <AppFrame activeItem="new-analysis">
     <>
-      <header className="topbar">
-        <div className="topbar-inner">
-          <div className="brand">
-            <div className="brand-symbol">Q</div>
-
-            <div className="brand-copy">
-              <strong>Agente RAG</strong>
-              <span>Otimização de código</span>
-            </div>
-          </div>
-
-          <div className="topbar-label">
-            Qiskit · Next-Gen Computing
-          </div>
-        </div>
-      </header>
+      <AppHeader />
 
       <main className="workspace feedback-workspace">
         <section className="page-intro">
@@ -199,5 +188,6 @@ export default function AnalysisFeedback({
         </footer>
       </main>
     </>
+    </AppFrame>
   );
 }

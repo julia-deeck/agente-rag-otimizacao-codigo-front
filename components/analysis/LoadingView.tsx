@@ -1,6 +1,9 @@
 
 "use client";
 
+import AppFrame from "../layout/AppFrame";
+import AppHeader from "../layout/AppHeader";
+
 type LoadingViewProps = {
   code: string;
   onBack: () => void;
@@ -15,23 +18,9 @@ export default function LoadingView({
     : ["Nenhum código foi informado."];
 
   return (
+    <AppFrame activeItem="new-analysis">
     <>
-      <header className="topbar">
-        <div className="topbar-inner">
-          <div className="brand">
-            <div className="brand-symbol">Q</div>
-
-            <div className="brand-copy">
-              <strong>Agente RAG</strong>
-              <span>Otimização de código</span>
-            </div>
-          </div>
-
-          <div className="topbar-label">
-            Qiskit · Next-Gen Computing
-          </div>
-        </div>
-      </header>
+      <AppHeader />
 
       <main className="workspace">
         <section className="page-intro">
@@ -146,5 +135,6 @@ export default function LoadingView({
         </footer>
       </main>
     </>
+    </AppFrame>
   );
 }
