@@ -14,7 +14,7 @@ export default function StartupSplash() {
   if (!isVisible) return null;
 
   return (
-    <div className="startup-splash" role="status" aria-label="Iniciando QuantumOne">
+    <div className="startup-splash" role="status" aria-live="polite" aria-busy="true" aria-label="Iniciando QuantumOne">
       <div className="startup-emerging-aura" aria-hidden="true" />
 
       <div className="startup-content">

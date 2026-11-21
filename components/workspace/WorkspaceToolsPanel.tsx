@@ -150,18 +150,15 @@ export default function WorkspaceToolsPanel({
       {activeTool === "files" && (
         <div className="workspace-files-layout">
           <section className="workspace-project-tree" aria-label="Explorador do projeto">
-            <div className="workspace-subpanel-heading"><span>EXPLORADOR</span><span className="workspace-connection-state">SEM PASTA VINCULADA</span></div>
-            <EmptyState icon={"\u25A4"} title="Nenhum workspace conectado">
-              <p>Pastas, arquivos e dependências aparecerão aqui quando o acesso ao sistema de arquivos estiver integrado.</p>
+            <div className="workspace-subpanel-heading"><span>EXPLORADOR</span><span className="workspace-connection-state">ARQUIVOS DO PROJETO</span></div>
+            <EmptyState icon={"\u25A4"} title="Nenhum arquivo selecionado">
+              <p>Adicione arquivos à conversa para consultá-los nesta área.</p>
             </EmptyState>
             <div className="workspace-permission-summary" aria-label="Permissões de pasta">
               <span>PERMISSÕES</span>
               <div><strong>Leitura</strong><small>Não concedida</small></div>
               <div><strong>Escrita</strong><small>Não concedida</small></div>
             </div>
-            <button type="button" className="button-secondary tool-action-button" disabled title="Disponível quando a integração de arquivos for implementada">
-              Vincular pasta do projeto
-            </button>
           </section>
 
           <section className="workspace-attachments" aria-label="Arquivos anexados à conversa">
@@ -178,7 +175,7 @@ export default function WorkspaceToolsPanel({
                     <button type="button" className="workspace-file-remove" onClick={() => onRemoveAttachment(file.id)} aria-label={`Remover ${file.name}`}>x</button>
                   </article>
                 ))}
-                <p className="workspace-tool-hint">Nomes e tamanhos ficam registrados nesta conversa. O conteúdo dos arquivos ainda não é enviado ao agente.</p>
+                <p className="workspace-tool-hint">Arquivos selecionados para esta conversa.</p>
               </div>
             ) : (
               <EmptyState icon="+" title="Nenhum arquivo anexado">
@@ -209,23 +206,16 @@ export default function WorkspaceToolsPanel({
                     <div><span>ORIGINAL</span><pre>{selectedDiff.originalLines.map((line, index) => <code key={index}>{String(index + 1).padStart(3, "0")}  {line || " "}{"\n"}</code>)}</pre></div>
                     <div><span>PROPOSTA</span><pre>{selectedDiff.proposedLines.map((line, index) => <code key={index}>{String(index + 1).padStart(3, "0")}  {line || " "}{"\n"}</code>)}</pre></div>
                   </div>
-                  <div className="workspace-disabled-actions">
-                    <button type="button" className="button-secondary" disabled={!onApproveDiffFile} onClick={() => onApproveDiffFile?.(selectedDiff.id)}>Aprovar este arquivo</button>
-                    <button type="button" className="button-secondary" disabled={!onRevertDiffFile} onClick={() => onRevertDiffFile?.(selectedDiff.id)}>Reverter este arquivo</button>
-                  </div>
+                  {(onApproveDiffFile || onRevertDiffFile) && <div className="workspace-disabled-actions">
+                    {onApproveDiffFile && <button type="button" className="button-secondary" onClick={() => onApproveDiffFile(selectedDiff.id)}>Aprovar este arquivo</button>}
+                    {onRevertDiffFile && <button type="button" className="button-secondary" onClick={() => onRevertDiffFile(selectedDiff.id)}>Reverter este arquivo</button>}
+                  </div>}
                 </div>
               )}
             </div>
           </div>
         ) : (
-          <div className="workspace-diff-viewer">
-            <div className="workspace-diff-status"><span className="workspace-status-dot" /> Aguardando proposta de alteração</div>
-            <div className="diff-preview-shell" aria-label="Comparação lado a lado vazia">
-              <div><span>ORIGINAL</span><code>Nenhum arquivo selecionado</code></div>
-              <div><span>PROPOSTA</span><code>O diff aparecerá após a análise</code></div>
-            </div>
-            <div className="workspace-disabled-actions"><button type="button" className="button-secondary" disabled>Aprovar arquivo</button><button type="button" className="button-secondary" disabled>Reverter</button></div>
-          </div>
+          <EmptyState icon={"\u00B1"} title="Nenhuma alteração nesta conversa"><p>Quando houver uma proposta, a comparação entre o original e o resultado será exibida aqui.</p></EmptyState>
         )
       )}
 
@@ -240,14 +230,14 @@ export default function WorkspaceToolsPanel({
             {terminalOutput?.lines?.length ? (
               <pre className="terminal-output-lines">{terminalOutput.lines.join("\n")}</pre>
             ) : (
-              <p className="terminal-welcome">A saída de comandos e processos aparecerá aqui quando o executor estiver conectado.</p>
+              <p className="terminal-welcome">Nenhuma saída registrada nesta conversa.</p>
             )}
             {terminalOutput?.exitCode !== undefined && <div className="terminal-exit-code">Processo finalizado com código {terminalOutput.exitCode}.</div>}
-            <div className="terminal-preview-prompt">
+            {onRunCommand && <div className="terminal-preview-prompt">
               <span>qone</span><code>$</code>
-              <input aria-label="Comando do terminal" value={terminalCommand} onChange={(event) => setTerminalCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") runTerminalCommand(); }} placeholder={onRunCommand ? "Digite um comando" : "Execução indisponível"} disabled={!onRunCommand || terminalOutput?.status === "running"} />
-              <button type="button" onClick={runTerminalCommand} disabled={!onRunCommand || !terminalCommand.trim() || terminalOutput?.status === "running"}>Executar</button>
-            </div>
+              <input aria-label="Comando do terminal" value={terminalCommand} onChange={(event) => setTerminalCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") runTerminalCommand(); }} placeholder="Digite um comando" disabled={terminalOutput?.status === "running"} />
+              <button type="button" onClick={runTerminalCommand} disabled={!terminalCommand.trim() || terminalOutput?.status === "running"}>Executar</button>
+            </div>}
           </div>
         </div>
       )}
@@ -271,7 +261,7 @@ export default function WorkspaceToolsPanel({
               ))}
             </div>
           ) : (
-              <div className="qiskit-circuit-empty"><span className="qiskit-circuit-wire" /><span className="qiskit-circuit-label">O diagrama do circuito aparecerá após a análise</span><span className="qiskit-circuit-wire" /></div>
+              <div className="qiskit-circuit-empty"><span className="qiskit-circuit-wire" /><span className="qiskit-circuit-label">Nenhum circuito nesta conversa</span><span className="qiskit-circuit-wire" /></div>
           )}
           <div className={`qiskit-equivalence-state qiskit-equivalence-${qiskitData?.equivalence ?? "unknown"}`}><span className="qiskit-state-dot" /><div><strong>{qiskitData?.equivalence === "equivalent" ? "Circuitos equivalentes" : qiskitData?.equivalence === "different" ? "Circuitos diferentes" : "Equivalência não verificada"}</strong><span>{qiskitData?.equivalence === "unknown" || !qiskitData?.equivalence ? "Nenhuma verificação foi executada." : "Resultado recebido da verificação."}</span></div></div>
         </div>
@@ -295,8 +285,7 @@ export default function WorkspaceToolsPanel({
           </div>
         ) : (
           <EmptyState icon={"\u2315"} title="Fontes e evidências">
-          <p>Referências recuperadas, versões e trechos de apoio serão exibidos aqui quando houver uma resposta do agente.</p>
-          <div className="source-preview-placeholder"><span>FONTE</span><span>VERSÃO</span><span>TRECHO RECUPERADO</span></div>
+          <p>Nenhuma fonte associada a esta conversa.</p>
           </EmptyState>
         )
       )}

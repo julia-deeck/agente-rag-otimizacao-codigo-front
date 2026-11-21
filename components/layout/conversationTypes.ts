@@ -24,6 +24,30 @@ export type EditorFileRecord = {
   isDirty?: boolean;
 };
 
+export type AnalysisResultRecord = {
+  summary: string;
+  suggestions: Array<{
+    title: string;
+    description: string;
+    rationale: string;
+    code?: string;
+  }>;
+  sources: Array<{
+    title: string;
+    origin?: string;
+    excerpt?: string;
+    url?: string;
+  }>;
+  metrics?: {
+    depthBefore?: number;
+    depthAfter?: number;
+    gatesBefore?: number;
+    gatesAfter?: number;
+  };
+  warnings?: string[];
+  requestId?: string;
+};
+
 export type ConversationRecord = {
   id: string;
   title: string;
@@ -38,4 +62,5 @@ export type ConversationRecord = {
   projectId?: string;
   attachments?: AttachmentRecord[];
   codeFiles?: EditorFileRecord[];
+  analysisResult?: AnalysisResultRecord;
 };

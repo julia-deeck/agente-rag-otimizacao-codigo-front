@@ -3,6 +3,10 @@
 import Image from "next/image";
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from "react";
 import type { ConversationRecord, ProjectRecord } from "../layout/conversationTypes";
+import { isProjectRecord, MAX_PROJECTS, parseUniqueRecords } from "../security/workspaceData";
+import useModalFocus from "../ui/useModalFocus";
+import FeedbackMessage, { type FeedbackAction, type FeedbackTone } from "../ui/FeedbackMessage";
+import EmptyState from "../ui/EmptyState";
 
 type ProjectsPageProps = {
   onOpenWorkspace: (projectId: string) => void;
@@ -10,31 +14,32 @@ type ProjectsPageProps = {
   onOpenConversation: (id: string) => void;
 };
 
-function isProjectRecord(value: unknown): value is ProjectRecord {
-  if (!value || typeof value !== "object") return false;
-  const project = value as Partial<ProjectRecord>;
-  return typeof project.id === "string" &&
-    typeof project.name === "string" &&
-    typeof project.description === "string" &&
-    (project.language === "OpenQASM 2" || project.language === "Python / Qiskit") &&
-    typeof project.createdAt === "string";
-}
-
-function readStoredProjects(): ProjectRecord[] {
-  if (typeof window === "undefined") return [];
+function readStoredProjects(): { projects: ProjectRecord[]; issue: string } {
+  if (typeof window === "undefined") return { projects: [], issue: "" };
   try {
-    const stored: unknown = JSON.parse(window.localStorage.getItem("quantumone.projects.v1") ?? "[]");
-    return Array.isArray(stored)
-      ? stored.filter(isProjectRecord).filter((project) => project.id !== "quantumone-default-project")
-      : [];
+    const raw = window.localStorage.getItem("quantumone.projects.v1");
+    if (raw === null) return { projects: [], issue: "" };
+    if (raw.length > 2 * 1024 * 1024) throw new Error("project-data-too-large");
+    const stored: unknown = JSON.parse(raw);
+    if (!Array.isArray(stored)) return { projects: [], issue: "Os dados dos projetos estão em um formato inválido. Confira seu backup antes de continuar." };
+    const parsed = parseUniqueRecords(stored, isProjectRecord, MAX_PROJECTS);
+    const projects = parsed.records.filter((project) => project.id !== "quantumone-default-project");
+    return {
+      projects,
+      issue: parsed.invalid ? "Os dados dos projetos são inválidos ou excedem o limite permitido." : "",
+    };
   } catch {
-    return [];
+    return { projects: [], issue: "Não foi possível ler os projetos salvos. Confira o armazenamento e tente novamente." };
   }
 }
 
 export default function ProjectsPage({ onOpenWorkspace, conversations, onOpenConversation }: ProjectsPageProps) {
   const [query, setQuery] = useState("");
-  const [projects, setProjects] = useState<ProjectRecord[]>(readStoredProjects);
+  const [initialProjects] = useState(readStoredProjects);
+  const [projects, setProjects] = useState<ProjectRecord[]>(initialProjects.projects);
+  const [storageIssue, setStorageIssue] = useState(initialProjects.issue);
+  const [storageReadBlocked, setStorageReadBlocked] = useState(Boolean(initialProjects.issue));
+  const [actionMessage, setActionMessage] = useState<{ message: string; tone: FeedbackTone; action?: FeedbackAction } | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
@@ -42,18 +47,43 @@ export default function ProjectsPage({ onOpenWorkspace, conversations, onOpenCon
   const [formError, setFormError] = useState("");
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingProjectName, setEditingProjectName] = useState("");
+  const createDialogRef = useModalFocus<HTMLElement>(isCreateDialogOpen);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        "quantumone.projects.v1",
-        JSON.stringify(projects),
-      );
-    } catch {
-      // Keep the current view available if browser storage is unavailable.
+    function handleProjectsChanged(event: Event) {
+      const changedProjects: unknown = (event as CustomEvent<unknown>).detail;
+      if (!Array.isArray(changedProjects)) return;
+      const parsed = parseUniqueRecords(changedProjects, isProjectRecord, MAX_PROJECTS);
+      setProjects(parsed.records);
+      setStorageReadBlocked(parsed.invalid);
+      setStorageIssue(parsed.invalid ? "Os dados restaurados contêm projetos inválidos. Nenhuma nova gravação será feita até uma cópia válida ser restaurada." : "");
     }
-    window.dispatchEvent(new CustomEvent("quantumone:projects-changed", { detail: projects }));
-  }, [projects]);
+    window.addEventListener("quantumone:projects-changed", handleProjectsChanged);
+    return () => window.removeEventListener("quantumone:projects-changed", handleProjectsChanged);
+  }, []);
+
+  function persistProjects(nextProjects: ProjectRecord[]) {
+    if (storageReadBlocked) {
+      setStorageIssue("Restaure uma cópia válida antes de alterar os projetos salvos.");
+      return false;
+    }
+    const projectIds = new Set(nextProjects.map((project) => project.id));
+    if (nextProjects.length > MAX_PROJECTS || nextProjects.some((project) => !isProjectRecord(project)) || projectIds.size !== nextProjects.length) {
+      setStorageIssue("Os dados do projeto ultrapassaram os limites permitidos e não foram salvos.");
+      return false;
+    }
+    try {
+      window.localStorage.setItem("quantumone.projects.v1", JSON.stringify(nextProjects));
+      setProjects(nextProjects);
+      setStorageIssue("");
+      setStorageReadBlocked(false);
+      window.dispatchEvent(new CustomEvent("quantumone:projects-changed", { detail: nextProjects }));
+      return true;
+    } catch {
+      setStorageIssue("Não foi possível salvar as alterações dos projetos. Libere espaço e tente novamente.");
+      return false;
+    }
+  }
 
   useEffect(() => {
     if (!isCreateDialogOpen) return;
@@ -106,7 +136,8 @@ export default function ProjectsPage({ onOpenWorkspace, conversations, onOpenCon
       language: projectLanguage,
       createdAt: new Date().toISOString(),
     };
-    setProjects((current) => [project, ...current]);
+    if (!persistProjects([project, ...projects])) return;
+    setActionMessage({ message: `Projeto “${normalizedName}” criado.`, tone: "success" });
     setQuery("");
     setIsCreateDialogOpen(false);
     resetCreateForm();
@@ -120,38 +151,46 @@ export default function ProjectsPage({ onOpenWorkspace, conversations, onOpenCon
   function renameProject(id: string) {
     const normalizedName = editingProjectName.trim();
     if (!normalizedName) return;
-    setProjects((current) => current.map((project) =>
-      project.id === id ? { ...project, name: normalizedName } : project
-    ));
+    if (!persistProjects(projects.map((project) => project.id === id ? { ...project, name: normalizedName } : project))) return;
+    setActionMessage({ message: "Nome do projeto atualizado.", tone: "success" });
     setEditingProjectId(null);
     setEditingProjectName("");
   }
 
   function toggleProjectPin(id: string) {
-    setProjects((current) => current.map((project) =>
-      project.id === id ? { ...project, isPinned: !project.isPinned } : project
-    ));
+    const project = projects.find((item) => item.id === id);
+    if (!project) return;
+    if (persistProjects(projects.map((item) => item.id === id ? { ...item, isPinned: !item.isPinned } : item))) {
+      setActionMessage({ message: project.isPinned ? "Projeto desafixado." : "Projeto fixado.", tone: "success" });
+    }
   }
 
   function deleteProject(project: ProjectRecord) {
     if (!window.confirm(`Excluir o projeto “${project.name}”?`)) return;
-    setProjects((current) => current.filter((item) => item.id !== project.id));
+    if (persistProjects(projects.filter((item) => item.id !== project.id))) {
+      setActionMessage({ message: `Projeto “${project.name}” excluído.`, tone: "success" });
+    }
   }
 
   function downloadProject(project: ProjectRecord) {
-    const contents = JSON.stringify(project, null, 2);
-    const blob = new Blob([contents], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const safeName = project.name
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-zA-Z0-9_-]+/g, "-")
-      .replace(/^-|-$/g, "") || "projeto";
-    link.href = url;
-    link.download = `${safeName}.json`;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    try {
+      const contents = JSON.stringify(project, null, 2);
+      const blob = new Blob([contents], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const safeName = project.name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9_-]+/g, "-")
+        .replace(/^-|-$/g, "") || "projeto";
+      link.href = url;
+      link.download = `${safeName}.json`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setActionMessage({ message: `Projeto “${project.name}” exportado.`, tone: "success" });
+    } catch {
+      setActionMessage({ message: "Não foi possível baixar o projeto. Tente novamente.", tone: "error", action: { label: "Tentar novamente", onClick: () => downloadProject(project) } });
+    }
   }
 
   function closeProjectMenu(event: MouseEvent<HTMLButtonElement>) {
@@ -189,7 +228,7 @@ export default function ProjectsPage({ onOpenWorkspace, conversations, onOpenCon
         </label>
 
         <div className="projects-toolbar-actions">
-          <span className="projects-count">
+          <span className="projects-count" aria-live="polite" aria-atomic="true">
             {filteredProjects.length} {filteredProjects.length === 1 ? "projeto" : "projetos"}
           </span>
           <button
@@ -202,6 +241,9 @@ export default function ProjectsPage({ onOpenWorkspace, conversations, onOpenCon
           </button>
         </div>
       </section>
+
+      {storageIssue && <FeedbackMessage tone="warning" className="projects-storage-alert" message={storageIssue} />}
+      {actionMessage && <FeedbackMessage tone={actionMessage.tone} className="projects-action-message" message={actionMessage.message} action={actionMessage.action} />}
 
       {filteredProjects.length > 0 ? (
         <section className="projects-grid" aria-label="Lista de projetos">
@@ -361,26 +403,16 @@ export default function ProjectsPage({ onOpenWorkspace, conversations, onOpenCon
           })}
         </section>
       ) : (
-        <section className="panel projects-empty-state">
-          <div className="projects-empty-mark" aria-hidden="true">
-            <Image
-              src="/images/quantumone-icon.png"
-              alt=""
-              width={48}
-              height={48}
-              aria-hidden="true"
-            />
-          </div>
-          <h2>{query ? "Nenhum projeto encontrado" : "Nenhum projeto criado"}</h2>
-          <p>
-            {query
-              ? `Não encontramos projetos para “${query}”. Confira o nome e tente novamente.`
-              : "Seus projetos aparecerão aqui depois que você clicar em Criar projeto."}
-          </p>
-          {query && (
-            <button type="button" className="button-secondary" onClick={() => setQuery("")}>Limpar busca</button>
-          )}
-        </section>
+        <EmptyState
+          className="panel projects-empty-state"
+          icon={<Image src="/images/quantumone-icon.png" alt="" width={48} height={48} />}
+          iconClassName="projects-empty-mark"
+          title={query ? "Nenhum projeto encontrado" : "Nenhum projeto criado"}
+          description={query
+            ? `Não encontramos projetos para “${query}”. Confira o nome e tente novamente.`
+            : "Seus projetos aparecerão aqui depois que você clicar em Criar projeto."}
+          action={query ? { label: "Limpar busca", onClick: () => setQuery(""), className: "button-secondary" } : undefined}
+        />
       )}
 
       <section className="projects-info-strip">
@@ -404,6 +436,8 @@ export default function ProjectsPage({ onOpenWorkspace, conversations, onOpenCon
             role="dialog"
             aria-modal="true"
             aria-labelledby="project-create-title"
+            tabIndex={-1}
+            ref={createDialogRef}
           >
             <div className="project-dialog-heading">
               <div>
@@ -460,11 +494,10 @@ export default function ProjectsPage({ onOpenWorkspace, conversations, onOpenCon
               </label>
 
               <p className="project-create-note">
-                O projeto será salvo no QuantumOne neste dispositivo. A seleção de uma pasta local
-                estará disponível quando o acesso a arquivos for integrado.
+                O projeto será salvo no QuantumOne neste dispositivo.
               </p>
 
-              {formError && <p className="project-form-error" role="alert">{formError}</p>}
+              {formError && <FeedbackMessage tone="error" className="project-form-error" message={formError} />}
 
               <div className="project-dialog-actions">
                 <button type="button" className="button-secondary" onClick={closeCreateDialog}>Cancelar</button>

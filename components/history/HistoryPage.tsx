@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import type { ConversationRecord } from "../layout/conversationTypes";
+import FeedbackMessage, { type FeedbackAction, type FeedbackTone } from "../ui/FeedbackMessage";
+import EmptyState from "../ui/EmptyState";
 
 type HistoryPageProps = {
   conversations: ConversationRecord[];
@@ -37,19 +39,24 @@ function conversationPreview(conversation: ConversationRecord) {
 }
 
 function exportConversation(conversation: ConversationRecord) {
-  const contents = JSON.stringify(conversation, null, 2);
-  const blob = new Blob([contents], { type: "application/json;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const safeName = conversation.title
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9_-]+/g, "-")
-    .replace(/^-|-$/g, "") || "conversa";
-  link.href = url;
-  link.download = `${safeName}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
+  try {
+    const contents = JSON.stringify(conversation, null, 2);
+    const blob = new Blob([contents], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const safeName = conversation.title
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-|-$/g, "") || "conversa";
+    link.href = url;
+    link.download = `${safeName}.json`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export default function HistoryPage({
@@ -64,6 +71,7 @@ export default function HistoryPage({
   const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [actionMessage, setActionMessage] = useState<{ message: string; tone: FeedbackTone; action?: FeedbackAction } | null>(null);
 
   const filteredConversations = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
@@ -81,8 +89,12 @@ export default function HistoryPage({
 
   function saveTitle(id: string) {
     const title = editingTitle.trim();
-    if (!title) return;
+    if (!title) {
+      setActionMessage({ message: "O título não pode ficar vazio.", tone: "error" });
+      return;
+    }
     onRenameConversation(id, title);
+    setActionMessage({ message: "Título atualizado.", tone: "success" });
     setEditingId(null);
     setEditingTitle("");
   }
@@ -90,7 +102,15 @@ export default function HistoryPage({
   function confirmDelete(conversation: ConversationRecord) {
     if (window.confirm(`Excluir a conversa “${conversation.title}”?`)) {
       onDeleteConversation(conversation.id);
+      setActionMessage({ message: `Conversa “${conversation.title}” excluída.`, tone: "success" });
     }
+  }
+
+  function exportAndReport(conversation: ConversationRecord) {
+    const exported = exportConversation(conversation);
+    setActionMessage(exported
+      ? { message: `Conversa “${conversation.title}” exportada.`, tone: "success" }
+      : { message: "Não foi possível exportar a conversa. Tente novamente.", tone: "error", action: { label: "Tentar novamente", onClick: () => exportAndReport(conversation) } });
   }
 
   return (
@@ -123,10 +143,12 @@ export default function HistoryPage({
             </button>
           )}
         </label>
-        <span className="history-count">
+        <span className="history-count" aria-live="polite" aria-atomic="true">
           {filteredConversations.length} {filteredConversations.length === 1 ? "conversa" : "conversas"}
         </span>
       </section>
+
+      {actionMessage && <FeedbackMessage tone={actionMessage.tone} className="history-action-message" message={actionMessage.message} action={actionMessage.action} />}
 
       {filteredConversations.length > 0 ? (
         <section className="history-list" aria-label="Conversas salvas">
@@ -190,14 +212,17 @@ export default function HistoryPage({
                   <button
                     type="button"
                     className="history-text-action"
-                    onClick={() => onToggleConversationPin(conversation.id)}
+                    onClick={() => {
+                      onToggleConversationPin(conversation.id);
+                      setActionMessage({ message: conversation.isPinned ? "Conversa desafixada." : "Conversa fixada.", tone: "success" });
+                    }}
                   >
                     {conversation.isPinned ? "Desafixar" : "Fixar"}
                   </button>
                   <button
                     type="button"
                     className="history-text-action"
-                    onClick={() => exportConversation(conversation)}
+                    onClick={() => exportAndReport(conversation)}
                   >
                     Exportar
                   </button>
@@ -224,20 +249,18 @@ export default function HistoryPage({
           ))}
         </section>
       ) : (
-        <section className="panel history-empty-state">
-          <div className="history-empty-icon" aria-hidden="true">◷</div>
-          <h2>{query ? "Nenhuma conversa encontrada" : "Seu histórico começa aqui"}</h2>
-          <p>
-            {query
-              ? "Tente buscar por outro título ou trecho de mensagem."
-              : "As conversas criadas no workspace ficam disponíveis aqui para você retomar quando quiser."}
-          </p>
-          {query ? (
-            <button type="button" className="button-secondary" onClick={() => setQuery("")}>Limpar busca</button>
-          ) : (
-            <button type="button" className="button-primary" onClick={onStartNewConversation}>Iniciar conversa</button>
-          )}
-        </section>
+        <EmptyState
+          className="panel history-empty-state"
+          icon="◷"
+          iconClassName="history-empty-icon"
+          title={query ? "Nenhuma conversa encontrada" : "Seu histórico começa aqui"}
+          description={query
+            ? "Tente buscar por outro título ou trecho de mensagem."
+            : "As conversas criadas no workspace ficam disponíveis aqui para você retomar quando quiser."}
+          action={query
+            ? { label: "Limpar busca", onClick: () => setQuery(""), className: "button-secondary" }
+            : { label: "Iniciar conversa", onClick: onStartNewConversation, className: "button-primary" }}
+        />
       )}
 
       <p className="history-storage-note">Seu histórico é salvo localmente neste dispositivo.</p>

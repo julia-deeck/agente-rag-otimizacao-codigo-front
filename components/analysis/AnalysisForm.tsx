@@ -4,15 +4,18 @@ import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } fro
 import dynamic from "next/dynamic";
 import Image from "next/image";
 
-import ExecutionStatus from "./ExecutionStatus";
+import AnalysisResultPanel from "./AnalysisResultPanel";
 import AppFrame from "../layout/AppFrame";
 import type { AttachmentRecord, ConversationRecord, EditorFileRecord, EditorLanguage, ProjectRecord } from "../layout/conversationTypes";
+import { isConversationRecord, isProjectRecord, MAX_CONVERSATIONS, MAX_PROJECTS, parseUniqueRecords } from "../security/workspaceData";
+import FeedbackMessage from "../ui/FeedbackMessage";
+import useModalFocus from "../ui/useModalFocus";
 import WorkspaceToolsPanel, { WorkspaceToolTabs, type WorkspaceToolId } from "../workspace/WorkspaceToolsPanel";
 
 const CodeEditor = dynamic(() => import("./CodeEditor"), {
   ssr: false,
   loading: () => (
-    <div className="editor-loading">Carregando editor...</div>
+    <div className="editor-loading" role="status" aria-live="polite" aria-busy="true">Carregando editor...</div>
   ),
 });
 
@@ -23,33 +26,42 @@ function conversationCodeSummary(conversation: ConversationRecord) {
 }
 
 function parseConversations(value: unknown): ConversationRecord[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is ConversationRecord =>
-    item && typeof item === "object" &&
-    typeof item.id === "string" && typeof item.title === "string" &&
-    typeof item.prompt === "string" && typeof item.qasmCode === "string" &&
-    typeof item.pythonCode === "string"
-  );
+  return Array.isArray(value) ? parseUniqueRecords(value, isConversationRecord, MAX_CONVERSATIONS).records : [];
 }
 
-function readStoredConversations(): ConversationRecord[] {
-  if (typeof window === "undefined") return [];
+function readStoredConversations(): { conversations: ConversationRecord[]; issue: string } {
+  if (typeof window === "undefined") return { conversations: [], issue: "" };
   try {
-    return parseConversations(JSON.parse(window.localStorage.getItem("quantumone.conversations.v1") ?? "[]"));
+    const raw = window.localStorage.getItem("quantumone.conversations.v1");
+    if (raw === null) return { conversations: [], issue: "" };
+    if (raw.length > 10 * 1024 * 1024) throw new Error("workspace-data-too-large");
+    const stored: unknown = JSON.parse(raw);
+    if (!Array.isArray(stored)) return { conversations: [], issue: "O histórico salvo está em um formato inválido. Restaure uma cópia pelas configurações; os dados antigos foram preservados." };
+    const parsed = parseUniqueRecords(stored, isConversationRecord, MAX_CONVERSATIONS);
+    return {
+      conversations: parsed.records,
+      issue: parsed.invalid ? "O histórico contém registros inválidos ou ultrapassa o limite permitido. Restaure uma cópia pelas configurações; os dados antigos foram preservados." : "",
+    };
   } catch {
-    return [];
+    return { conversations: [], issue: "Não foi possível ler o histórico salvo. Restaure uma cópia pelas configurações; os dados antigos foram preservados." };
   }
 }
 
-function readStoredProjects(): ProjectRecord[] {
-  if (typeof window === "undefined") return [];
+function readStoredProjects(): { projects: ProjectRecord[]; issue: string } {
+  if (typeof window === "undefined") return { projects: [], issue: "" };
   try {
-    const stored: unknown = JSON.parse(window.localStorage.getItem("quantumone.projects.v1") ?? "[]");
-    return Array.isArray(stored)
-      ? stored.filter((item): item is ProjectRecord => item && typeof item === "object" && typeof item.id === "string" && typeof item.name === "string")
-      : [];
+    const raw = window.localStorage.getItem("quantumone.projects.v1");
+    if (raw === null) return { projects: [], issue: "" };
+    if (raw.length > 2 * 1024 * 1024) throw new Error("project-data-too-large");
+    const stored: unknown = JSON.parse(raw);
+    if (!Array.isArray(stored)) return { projects: [], issue: "Os dados dos projetos estão em um formato inválido. Confira a tela Projetos ou restaure um backup." };
+    const parsed = parseUniqueRecords(stored, isProjectRecord, MAX_PROJECTS);
+    return {
+      projects: parsed.records,
+      issue: parsed.invalid ? "Os projetos contêm registros inválidos ou ultrapassam o limite permitido. Confira a tela Projetos ou restaure um backup." : "",
+    };
   } catch {
-    return [];
+    return { projects: [], issue: "Não foi possível ler os projetos salvos. Confira a tela Projetos ou restaure um backup." };
   }
 }
 
@@ -71,6 +83,7 @@ export default function AnalysisForm() {
   const [topK, setTopK] = useState("5");
   const [showInputErrors, setShowInputErrors] = useState(false);
   const [isCodePanelOpen, setIsCodePanelOpen] = useState(false);
+  const codeDialogRef = useModalFocus<HTMLElement>(isCodePanelOpen);
   const [activeTool, setActiveTool] = useState<WorkspaceToolId | null>(null);
   const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
   const [codeFiles, setCodeFiles] = useState<EditorFileRecord[]>([
@@ -89,8 +102,13 @@ export default function AnalysisForm() {
     codeFiles: EditorFileRecord[];
     activeCodeFileId: string;
   } | null>(null);
-  const [conversations, setConversations] = useState<ConversationRecord[]>(readStoredConversations);
-  const [projects, setProjects] = useState<ProjectRecord[]>(readStoredProjects);
+  const [initialConversationState] = useState(readStoredConversations);
+  const [conversations, setConversations] = useState<ConversationRecord[]>(initialConversationState.conversations);
+  const [historyStorageIssue, setHistoryStorageIssue] = useState(initialConversationState.issue);
+  const blockConversationWrites = useRef(Boolean(initialConversationState.issue));
+  const [initialProjectState] = useState(readStoredProjects);
+  const [projects, setProjects] = useState<ProjectRecord[]>(initialProjectState.projects);
+  const [projectStorageIssue, setProjectStorageIssue] = useState(initialProjectState.issue);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const isHydrated = useSyncExternalStore(subscribeToHydration, getClientHydrationSnapshot, getServerHydrationSnapshot);
@@ -104,7 +122,16 @@ export default function AnalysisForm() {
 
   useEffect(() => {
     function handleConversationsChanged(event: Event) {
-      setConversations(parseConversations((event as CustomEvent<unknown>).detail));
+      const nextValue = (event as CustomEvent<unknown>).detail;
+      const nextConversations = parseConversations(nextValue);
+      if (Array.isArray(nextValue) && nextConversations.length !== nextValue.length) {
+        blockConversationWrites.current = true;
+        setHistoryStorageIssue("A cópia restaurada contém registros incompletos. Alguns itens foram ignorados.");
+      } else {
+        setHistoryStorageIssue("");
+        blockConversationWrites.current = false;
+      }
+      setConversations(nextConversations);
       setActiveConversationId(null);
     }
 
@@ -151,16 +178,19 @@ export default function AnalysisForm() {
   }, []);
 
   useEffect(() => {
-    function applyProjects(nextProjects: ProjectRecord[]) {
+    function applyProjects(nextProjects: ProjectRecord[], issue = "") {
       setProjects(nextProjects);
+      setProjectStorageIssue(issue);
       const projectIds = new Set(nextProjects.map((project) => project.id));
       setActiveProjectId((current) => current && !projectIds.has(current) ? null : current);
-      setConversations((current) => current.map((conversation) => {
-        if (!conversation.projectId || projectIds.has(conversation.projectId)) return conversation;
-        const updated = { ...conversation };
-        delete updated.projectId;
-        return updated;
-      }));
+      if (!issue) {
+        setConversations((current) => current.map((conversation) => {
+          if (!conversation.projectId || projectIds.has(conversation.projectId)) return conversation;
+          const updated = { ...conversation };
+          delete updated.projectId;
+          return updated;
+        }));
+      }
     }
 
     function readProjects() {
@@ -170,22 +200,25 @@ export default function AnalysisForm() {
           applyProjects([]);
           return;
         }
+        if (stored.length > 2 * 1024 * 1024) throw new Error("project-data-too-large");
         const parsed: unknown = JSON.parse(stored);
         if (Array.isArray(parsed)) {
-          const savedProjects = parsed.filter((item): item is ProjectRecord =>
-            item && typeof item === "object" &&
-            typeof item.id === "string" && typeof item.name === "string"
-          );
-          applyProjects(savedProjects);
+          const result = parseUniqueRecords(parsed, isProjectRecord, MAX_PROJECTS);
+          applyProjects(result.records, result.invalid ? "Os dados de projeto são inválidos ou excedem o limite permitido." : "");
+        } else {
+          applyProjects([], "Os dados dos projetos estão em um formato inválido. Confira a tela Projetos ou restaure um backup.");
         }
       } catch {
-        applyProjects([]);
+        applyProjects([], "Não foi possível ler os projetos salvos. Confira a tela Projetos ou restaure um backup.");
       }
     }
 
     function handleProjectsChanged(event: Event) {
-      const changedProjects = (event as CustomEvent<ProjectRecord[]>).detail;
-      if (Array.isArray(changedProjects)) applyProjects(changedProjects);
+      const changedProjects: unknown = (event as CustomEvent<unknown>).detail;
+      if (Array.isArray(changedProjects)) {
+        const result = parseUniqueRecords(changedProjects, isProjectRecord, MAX_PROJECTS);
+        applyProjects(result.records, result.invalid ? "Os dados de projeto recebidos são inválidos." : "");
+      }
     }
 
     window.addEventListener("quantumone:projects-changed", handleProjectsChanged);
@@ -197,14 +230,16 @@ export default function AnalysisForm() {
   }, []);
 
   useEffect(() => {
-    if (!isHydrated) return;
+    if (!isHydrated || blockConversationWrites.current) return;
     try {
       window.localStorage.setItem("quantumone.conversations.v1", JSON.stringify(conversations));
+      window.setTimeout(() => setHistoryStorageIssue(""), 0);
     } catch {
       window.setTimeout(() => setFeedback({
         type: "error",
         message: "Não foi possível salvar o histórico neste dispositivo.",
       }), 0);
+      window.setTimeout(() => setHistoryStorageIssue("O histórico não pôde ser salvo neste dispositivo. Libere espaço ou exporte uma cópia pelas configurações."), 0);
     }
   }, [conversations, isHydrated]);
 
@@ -217,12 +252,18 @@ export default function AnalysisForm() {
   const visibleCodeFiles = codeFiles.filter((file) => file.language === activeLanguage);
 
   function setCode(value: string) {
+    if (value.length > 500_000) {
+      setEditorMessage("O código ultrapassa o limite de 500 mil caracteres.");
+      setFeedback({ type: "error", message: "Reduza o código para continuar; o limite é de 500 mil caracteres." });
+      return false;
+    }
     if (activeCodeFile) {
       setCodeFiles((current) => current.map((file) => file.id === activeCodeFile.id ? { ...file, content: value, isDirty: true } : file));
       if (activeCodeFile.id === "main-qasm") setQasmCode(value);
       if (activeCodeFile.id === "main-python") setPythonCode(value);
     } else if (activeLanguage === "qasm") setQasmCode(value);
     else setPythonCode(value);
+    return true;
   }
 
   function selectCodeFile(file: EditorFileRecord) {
@@ -345,15 +386,28 @@ export default function AnalysisForm() {
 
   function handleSelectFiles(files: FileList | null) {
     if (!files?.length) return;
-    const selected = Array.from(files).map((file) => ({
+    const picked = Array.from(files);
+    const accepted = picked.filter((file) => file.size <= 10 * 1024 * 1024 && file.name.length <= 255);
+    const rejectedCount = picked.length - accepted.length;
+    setFeedback(rejectedCount ? {
+      type: "error",
+      message: "Alguns arquivos foram recusados. Cada arquivo deve ter até 10 MB e um nome com no máximo 255 caracteres.",
+    } : null);
+    const remainingSlots = Math.max(0, 10 - attachments.length);
+    const selected = accepted.slice(0, remainingSlots).map((file) => ({
       id: globalThis.crypto?.randomUUID?.() ?? `${file.name}-${file.lastModified}-${Date.now()}`,
       name: file.name,
       size: file.size,
       type: file.type || "Arquivo local",
     }));
-    setAttachments((current) => [...current, ...selected]);
-    setActiveTool("files");
-    setActiveConversationId(null);
+    if (accepted.length > remainingSlots) {
+      setFeedback({ type: "error", message: "O limite é de 10 arquivos por conversa. Remova um arquivo para adicionar outro." });
+    }
+    if (selected.length) {
+      setAttachments((current) => [...current, ...selected]);
+      setActiveTool("files");
+      setActiveConversationId(null);
+    }
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -475,7 +529,7 @@ export default function AnalysisForm() {
         return;
       }
 
-      setCode(clipboardText);
+      if (!setCode(clipboardText)) return;
       setActiveConversationId(null);
       setEditorMessage("Código inserido!");
       setFeedback(null);
@@ -524,6 +578,10 @@ export default function AnalysisForm() {
     event.preventDefault();
 
     const activeLanguageCode = activeLanguage === "qasm" ? qasmCode : pythonCode;
+    if (question.length > 20_000 || activeLanguageCode.length > 500_000 || attachments.length > 10) {
+      setFeedback({ type: "error", message: "A pergunta, o código ou os anexos excedem os limites permitidos. Revise o conteúdo antes de continuar." });
+      return;
+    }
     const hasActiveLanguageFile = visibleCodeFiles.some((file) => file.content.trim());
     if (!activeLanguageCode.trim() && !hasActiveLanguageFile && !question.trim()) {
       setShowInputErrors(true);
@@ -628,6 +686,9 @@ export default function AnalysisForm() {
                 </div>
               )}
 
+              {historyStorageIssue && <FeedbackMessage tone="warning" className="chat-storage-warning" message={historyStorageIssue} />}
+              {projectStorageIssue && <FeedbackMessage tone="warning" className="chat-storage-warning" message={projectStorageIssue} />}
+
               <WorkspaceToolTabs activeTool={activeTool} onSelect={setActiveTool} />
               {activeTool && (
                 <WorkspaceToolsPanel
@@ -666,18 +727,7 @@ export default function AnalysisForm() {
                               </div>
                             ) : null}
                           </div>
-                          <div className="chat-agent-placeholder">
-                            <span className="chat-agent-avatar" aria-hidden="true">Q</span>
-                            <div>
-                              <strong>Resposta do QOne Agent</strong>
-                              <p>A solicitação foi salva. A resposta de análise aparecerá aqui quando o serviço estiver conectado.</p>
-                              <ExecutionStatus stage="saved" />
-                              <div className="chat-agent-placeholder-actions">
-                                <button type="button" className="button-quiet" disabled>Tentar novamente</button>
-                                <button type="button" className="button-quiet" disabled>Continuar conversa</button>
-                              </div>
-                            </div>
-                          </div>
+                          <AnalysisResultPanel result={activeConversation.analysisResult} />
                           <p className="chat-local-note">
                             A QOne Agent é uma IA e pode cometer erros.
                           </p>
@@ -742,6 +792,7 @@ export default function AnalysisForm() {
                   }
                   aria-invalid={showInputErrors}
                   value={question}
+                  maxLength={20_000}
                   onChange={(event) => {
                     setActiveConversationId(null);
                     setQuestion(event.target.value);
@@ -822,9 +873,7 @@ export default function AnalysisForm() {
               </div>
 
               {feedback && (
-                <div className="form-feedback error" role="alert">
-                  {feedback.message}
-                </div>
+                <FeedbackMessage tone="error" className="form-feedback error" message={feedback.message} />
               )}
             </section>
 
@@ -841,6 +890,8 @@ export default function AnalysisForm() {
                   role="dialog"
                   aria-modal="true"
                   aria-labelledby="code-dialog-title"
+                  tabIndex={-1}
+                  ref={codeDialogRef}
                 >
               <div className="context-panel-heading">
                 <div>
@@ -1005,9 +1056,7 @@ export default function AnalysisForm() {
               </div>
 
               {editorMessage && (
-                <p className="editor-message" role="status">
-                  {editorMessage}
-                </p>
+                <FeedbackMessage tone="info" className="editor-message" message={editorMessage} />
               )}
 
               <div className="code-dialog-actions">

@@ -53,7 +53,7 @@ const qasmLanguage = StreamLanguage.define({
       return "variableName";
     }
 
-    if (stream.match(/->|==|<=|>=|[=+\-*/^<>]/)) {
+    if (stream.match(/->|==|<=|>=|[=+\-*\/^<>]/)) {
       return "operator";
     }
 

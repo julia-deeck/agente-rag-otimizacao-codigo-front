@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import useModalFocus from "../ui/useModalFocus";
 
 export type SourceDetails = {
   id: string;
@@ -24,6 +25,7 @@ export default function SourceDrawer({
   onClose,
 }: SourceDrawerProps) {
   const [copyResult, setCopyResult] = useState<{ sourceId: string; message: string } | null>(null);
+  const dialogRef = useModalFocus<HTMLElement>(Boolean(source));
   const copyMessage = source && copyResult?.sourceId === source.id ? copyResult.message : "";
 
   useEffect(() => {
@@ -51,6 +53,18 @@ export default function SourceDrawer({
   }
 
   const currentSource = source;
+  const safeUrl = (() => {
+    if (!currentSource.url) return null;
+    try {
+      const url = new URL(currentSource.url);
+      const isLoopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+      return (url.protocol === "https:" || (url.protocol === "http:" && isLoopback)) && !url.username && !url.password
+        ? url.toString()
+        : null;
+    } catch {
+      return null;
+    }
+  })();
 
   async function handleCopyReference() {
     const reference = [
@@ -83,6 +97,8 @@ export default function SourceDrawer({
         role="dialog"
         aria-modal="true"
         aria-labelledby="source-drawer-title"
+        tabIndex={-1}
+        ref={dialogRef}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="source-drawer-header">
@@ -155,7 +171,7 @@ export default function SourceDrawer({
           </span>
 
           <div className="source-relationship">
-            {source.relationship}
+            {source.relationship || "Não há detalhes sobre a relação desta fonte com a análise."}
           </div>
 
           <p className="drawer-warning">
@@ -170,14 +186,14 @@ export default function SourceDrawer({
             LINK DA DOCUMENTAÇÃO
           </span>
 
-          {source.url ? (
+          {safeUrl ? (
             <a
-              href={source.url}
+              href={safeUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="source-url"
             >
-              {source.url}
+              {safeUrl}
             </a>
           ) : (
             <p>
@@ -187,9 +203,9 @@ export default function SourceDrawer({
         </section>
 
         <div className="source-drawer-actions">
-          {source.url && (
+          {safeUrl && (
             <a
-              href={source.url}
+              href={safeUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="button-primary drawer-action-link"

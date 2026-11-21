@@ -2,8 +2,10 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState, type FormEvent, type MouseEvent } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from "react";
 import type { ConversationRecord, ProjectRecord } from "./conversationTypes";
+import { readUserProfile, type UserProfile } from "../auth/profileStorage";
 
 type SidebarProps = {
   activeItem: string;
@@ -55,10 +57,22 @@ export default function Sidebar({
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [openConversationMenuId, setOpenConversationMenuId] = useState<string | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const orderedConversations = useMemo(() => [...conversations].sort((a, b) => {
     if (Boolean(a.isPinned) !== Boolean(b.isPinned)) return a.isPinned ? -1 : 1;
     return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
   }), [conversations]);
+
+  useEffect(() => {
+    const syncProfile = () => setProfile(readUserProfile());
+    syncProfile();
+    window.addEventListener("storage", syncProfile);
+    window.addEventListener("quantumone:profile-changed", syncProfile);
+    return () => {
+      window.removeEventListener("storage", syncProfile);
+      window.removeEventListener("quantumone:profile-changed", syncProfile);
+    };
+  }, []);
 
   function saveConversationTitle(event: FormEvent<HTMLFormElement>, id: string) {
     event.preventDefault();
@@ -138,6 +152,20 @@ export default function Sidebar({
           </button>
         ))}
       </nav>
+
+      <Link href={profile ? "/perfil" : "/cadastro"} className="sidebar-create-account" aria-label={profile?.name ?? "Criar conta"} title={profile?.name ?? "Criar conta"}>
+        <span className={`sidebar-item-icon ${profile ? "sidebar-user-icon" : ""}`} aria-hidden="true">
+          {profile?.avatarDataUrl ? (
+            <Image src={profile.avatarDataUrl} alt="" aria-hidden="true" width={26} height={26} unoptimized className="sidebar-user-avatar" />
+          ) : profile ? (
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="8" r="3.25" />
+              <path d="M5.5 19.25c.5-3.05 2.9-5.1 6.5-5.1s6 2.05 6.5 5.1" />
+            </svg>
+          ) : "✦"}
+        </span>
+        <span>{profile?.name ?? "Criar conta"}</span>
+      </Link>
 
       {conversations.length > 0 && (
         <section className="sidebar-recent-conversations" aria-label="Conversas recentes">
@@ -327,6 +355,7 @@ export default function Sidebar({
 
         <span className="sidebar-status" />
       </div>
+
     </aside>
   );
 }

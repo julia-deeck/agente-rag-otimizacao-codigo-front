@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { EditorLanguage } from "../layout/conversationTypes";
+import { isConversationRecord, isProjectRecord, MAX_CONVERSATIONS, MAX_PROJECTS, MAX_WORKSPACE_BACKUP_BYTES, parseUniqueRecords } from "../security/workspaceData";
+import FeedbackMessage, { type FeedbackAction, type FeedbackTone } from "../ui/FeedbackMessage";
 
 type AppPreferences = {
   interfaceScale: "90" | "100" | "110";
@@ -23,40 +25,59 @@ const DEFAULT_PREFERENCES: AppPreferences = {
   openCodePanelOnNewConversation: false,
 };
 
-function readStoredPreferences(): AppPreferences {
-  if (typeof window === "undefined") return DEFAULT_PREFERENCES;
+function readStoredPreferences(): { preferences: AppPreferences; issue: boolean } {
+  if (typeof window === "undefined") return { preferences: DEFAULT_PREFERENCES, issue: false };
   try {
-    const parsed: Partial<AppPreferences> = JSON.parse(window.localStorage.getItem("quantumone.preferences.v1") ?? "{}");
-    return {
+    const raw = window.localStorage.getItem("quantumone.preferences.v1");
+    if (raw === null) return { preferences: DEFAULT_PREFERENCES, issue: false };
+    if (raw.length > 16_384) return { preferences: DEFAULT_PREFERENCES, issue: true };
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { preferences: DEFAULT_PREFERENCES, issue: true };
+    const values = parsed as Partial<AppPreferences>;
+    const preferences: AppPreferences = {
       ...DEFAULT_PREFERENCES,
-      ...parsed,
-      reduceMotion: parsed.reduceMotion === true,
-      highContrast: parsed.highContrast === true,
-      interfaceScale: parsed.interfaceScale === "90" || parsed.interfaceScale === "110" ? parsed.interfaceScale : "100",
-      defaultLanguage: parsed.defaultLanguage === "python" ? "python" : "qasm",
-      defaultTopK: parsed.defaultTopK === "3" || parsed.defaultTopK === "8" || parsed.defaultTopK === "10" ? parsed.defaultTopK : "5",
-      sendWithEnter: parsed.sendWithEnter === true,
-      openCodePanelOnNewConversation: parsed.openCodePanelOnNewConversation === true,
+      reduceMotion: values.reduceMotion === true,
+      highContrast: values.highContrast === true,
+      interfaceScale: values.interfaceScale === "90" || values.interfaceScale === "110" ? values.interfaceScale : "100",
+      defaultLanguage: values.defaultLanguage === "python" ? "python" : "qasm",
+      defaultTopK: values.defaultTopK === "3" || values.defaultTopK === "8" || values.defaultTopK === "10" ? values.defaultTopK : "5",
+      sendWithEnter: values.sendWithEnter === true,
+      openCodePanelOnNewConversation: values.openCodePanelOnNewConversation === true,
     };
+    return { preferences, issue: false };
   } catch {
-    return DEFAULT_PREFERENCES;
+    return { preferences: DEFAULT_PREFERENCES, issue: true };
   }
 }
 
 export default function SettingsPage() {
-  const [preferences, setPreferences] = useState<AppPreferences>(readStoredPreferences);
+  const [initialPreferenceState] = useState(readStoredPreferences);
+  const [preferences, setPreferences] = useState<AppPreferences>(initialPreferenceState.preferences);
+  const [preferenceStorageBlocked, setPreferenceStorageBlocked] = useState(initialPreferenceState.issue);
   const [savedData, setSavedData] = useState({ conversations: 0, projects: 0, available: true });
-  const [restoreMessage, setRestoreMessage] = useState("");
+  const [restoreMessage, setRestoreMessage] = useState<{ message: string; tone: FeedbackTone; action?: FeedbackAction } | null>(null);
+  const [preferenceSaveFailed, setPreferenceSaveFailed] = useState(false);
   const backupInputRef = useRef<HTMLInputElement>(null);
+
+  function showRestoreMessage(message: string, tone: FeedbackTone = "success", action?: FeedbackAction) {
+    setRestoreMessage({ message, tone, action });
+  }
 
   useEffect(() => {
     function readSavedData() {
       try {
-        const conversations = JSON.parse(window.localStorage.getItem("quantumone.conversations.v1") ?? "[]");
-        const projects = JSON.parse(window.localStorage.getItem("quantumone.projects.v1") ?? "[]");
+        const conversationsRaw = window.localStorage.getItem("quantumone.conversations.v1") ?? "[]";
+        const projectsRaw = window.localStorage.getItem("quantumone.projects.v1") ?? "[]";
+        if (conversationsRaw.length > MAX_WORKSPACE_BACKUP_BYTES || projectsRaw.length > 2 * 1024 * 1024) throw new Error("stored-data-too-large");
+        const conversations: unknown = JSON.parse(conversationsRaw);
+        const projects: unknown = JSON.parse(projectsRaw);
+        if (!Array.isArray(conversations) || !Array.isArray(projects)) throw new Error("invalid-storage-shape");
+        const parsedConversations = parseUniqueRecords(conversations, isConversationRecord, MAX_CONVERSATIONS);
+        const parsedProjects = parseUniqueRecords(projects, isProjectRecord, MAX_PROJECTS);
+        if (parsedConversations.invalid || parsedProjects.invalid) throw new Error("invalid-stored-record");
         setSavedData({
-          conversations: Array.isArray(conversations) ? conversations.length : 0,
-          projects: Array.isArray(projects) ? projects.length : 0,
+          conversations: parsedConversations.records.length,
+          projects: parsedProjects.records.length,
           available: true,
         });
       } catch {
@@ -80,66 +101,106 @@ export default function SettingsPage() {
   }, [preferences]);
 
   useEffect(() => {
+    if (preferenceStorageBlocked) {
+      window.setTimeout(() => setPreferenceSaveFailed(true), 0);
+      return;
+    }
     try {
       window.localStorage.setItem("quantumone.preferences.v1", JSON.stringify(preferences));
+      window.setTimeout(() => setPreferenceSaveFailed(false), 0);
     } catch {
-      // Keep preferences active for this session if browser storage is unavailable.
+      window.setTimeout(() => setPreferenceSaveFailed(true), 0);
     }
     window.dispatchEvent(new CustomEvent("quantumone:preferences-changed", {
       detail: preferences,
     }));
-  }, [preferences]);
+  }, [preferences, preferenceStorageBlocked]);
 
   function updatePreference<K extends keyof AppPreferences>(key: K, value: AppPreferences[K]) {
+    setPreferenceStorageBlocked(false);
     setPreferences((current) => ({ ...current, [key]: value }));
   }
 
   function exportWorkspaceBackup() {
-    const backup = {
-      format: "quantumone-workspace-backup",
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      conversations: JSON.parse(window.localStorage.getItem("quantumone.conversations.v1") ?? "[]"),
-      projects: JSON.parse(window.localStorage.getItem("quantumone.projects.v1") ?? "[]"),
-      preferences: JSON.parse(window.localStorage.getItem("quantumone.preferences.v1") ?? "{}"),
-    };
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `quantumone-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+    setRestoreMessage(null);
+    try {
+      const conversationsRaw = window.localStorage.getItem("quantumone.conversations.v1") ?? "[]";
+      const projectsRaw = window.localStorage.getItem("quantumone.projects.v1") ?? "[]";
+      const preferencesRaw = window.localStorage.getItem("quantumone.preferences.v1") ?? "{}";
+      if (conversationsRaw.length > MAX_WORKSPACE_BACKUP_BYTES || projectsRaw.length > 2 * 1024 * 1024 || preferencesRaw.length > 16_384) {
+        throw new Error("stored-data-too-large");
+      }
+      const conversations: unknown = JSON.parse(conversationsRaw);
+      const projects: unknown = JSON.parse(projectsRaw);
+      const preferences: unknown = JSON.parse(preferencesRaw);
+      if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) throw new Error("invalid-preferences");
+      const backup = {
+        format: "quantumone-workspace-backup",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        conversations,
+        projects,
+        preferences,
+      };
+      if (!Array.isArray(backup.conversations) || !Array.isArray(backup.projects) ||
+        parseUniqueRecords(backup.conversations, isConversationRecord, MAX_CONVERSATIONS).invalid ||
+        parseUniqueRecords(backup.projects, isProjectRecord, MAX_PROJECTS).invalid) {
+        throw new Error("invalid-workspace-data");
+      }
+      const contents = JSON.stringify(backup, null, 2);
+      if (new Blob([contents]).size > MAX_WORKSPACE_BACKUP_BYTES) {
+        showRestoreMessage("A cópia ultrapassa o limite de 10 MB e não pôde ser exportada.", "error", { label: "Tentar novamente", onClick: exportWorkspaceBackup });
+        return;
+      }
+      const blob = new Blob([contents], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `quantumone-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showRestoreMessage("Cópia do workspace exportada.");
+    } catch {
+      showRestoreMessage("Não foi possível exportar a cópia. Verifique os dados salvos e tente novamente.", "error", { label: "Tentar novamente", onClick: exportWorkspaceBackup });
+    }
   }
 
   async function restoreWorkspaceBackup(file: File | undefined) {
     if (!file) return;
     try {
+      if (file.size > MAX_WORKSPACE_BACKUP_BYTES) {
+        showRestoreMessage("A cópia ultrapassa o limite de 10 MB.", "error", { label: "Selecionar outro arquivo", onClick: () => backupInputRef.current?.click() });
+        return;
+      }
       const backup: unknown = JSON.parse(await file.text());
       if (!backup || typeof backup !== "object" ||
         (backup as { format?: unknown }).format !== "quantumone-workspace-backup" ||
+        (backup as { version?: unknown }).version !== 1 ||
         !Array.isArray((backup as { conversations?: unknown }).conversations) ||
-        !Array.isArray((backup as { projects?: unknown }).projects)) {
-        setRestoreMessage("Arquivo de backup QuantumOne inválido.");
+        !Array.isArray((backup as { projects?: unknown }).projects) ||
+        ((backup as { preferences?: unknown }).preferences !== undefined &&
+          ((backup as { preferences?: unknown }).preferences === null || typeof (backup as { preferences?: unknown }).preferences !== "object" ||
+            Array.isArray((backup as { preferences?: unknown }).preferences)))) {
+        showRestoreMessage("Arquivo de backup QuantumOne inválido.", "error", { label: "Selecionar outro arquivo", onClick: () => backupInputRef.current?.click() });
         return;
       }
       const restored = backup as { conversations: unknown[]; projects: unknown[]; preferences?: unknown };
-      const validConversations = restored.conversations.filter((item) =>
-        item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" &&
-        typeof (item as { title?: unknown }).title === "string" &&
-        typeof (item as { prompt?: unknown }).prompt === "string" &&
-        typeof (item as { qasmCode?: unknown }).qasmCode === "string" &&
-        typeof (item as { pythonCode?: unknown }).pythonCode === "string"
-      );
-      const validProjects = restored.projects.filter((item) =>
-        item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" &&
-        typeof (item as { name?: unknown }).name === "string"
-      );
-      window.localStorage.setItem("quantumone.conversations.v1", JSON.stringify(validConversations));
-      window.localStorage.setItem("quantumone.projects.v1", JSON.stringify(validProjects));
+      const parsedConversations = parseUniqueRecords(restored.conversations, isConversationRecord, MAX_CONVERSATIONS);
+      const parsedProjects = parseUniqueRecords(restored.projects, isProjectRecord, MAX_PROJECTS);
+      if (parsedConversations.invalid || parsedProjects.invalid) {
+        showRestoreMessage("A cópia contém registros incompletos ou incompatíveis. Nenhum dado foi alterado.", "error", { label: "Selecionar outro arquivo", onClick: () => backupInputRef.current?.click() });
+        return;
+      }
+      const validConversations = parsedConversations.records;
+      const validProjects = parsedProjects.records;
+      const updates = new Map<string, string>([
+        ["quantumone.conversations.v1", JSON.stringify(validConversations)],
+        ["quantumone.projects.v1", JSON.stringify(validProjects)],
+      ]);
+      let nextPreferences: AppPreferences | null = null;
       if (restored.preferences && typeof restored.preferences === "object") {
         const imported = restored.preferences as Partial<AppPreferences>;
-        const nextPreferences: AppPreferences = {
+        nextPreferences = {
           ...DEFAULT_PREFERENCES,
           interfaceScale: imported.interfaceScale === "90" || imported.interfaceScale === "110" ? imported.interfaceScale : "100",
           reduceMotion: imported.reduceMotion === true,
@@ -149,17 +210,34 @@ export default function SettingsPage() {
           sendWithEnter: imported.sendWithEnter === true,
           openCodePanelOnNewConversation: imported.openCodePanelOnNewConversation === true,
         };
-        window.localStorage.setItem("quantumone.preferences.v1", JSON.stringify(nextPreferences));
-        setPreferences(nextPreferences);
+        updates.set("quantumone.preferences.v1", JSON.stringify(nextPreferences));
       }
+      const previousValues = new Map<string, string | null>();
+      for (const key of updates.keys()) previousValues.set(key, window.localStorage.getItem(key));
+      try {
+        for (const [key, value] of updates) window.localStorage.setItem(key, value);
+      } catch (error) {
+        for (const [key, value] of previousValues) {
+          try {
+            if (value === null) window.localStorage.removeItem(key);
+            else window.localStorage.setItem(key, value);
+          } catch {
+            // Best effort rollback after a quota or storage failure.
+          }
+        }
+        throw error;
+      }
+      if (nextPreferences) setPreferences(nextPreferences);
+      if (nextPreferences) setPreferenceStorageBlocked(false);
       window.dispatchEvent(new CustomEvent("quantumone:conversations-changed", { detail: validConversations }));
       window.dispatchEvent(new CustomEvent("quantumone:projects-changed", { detail: validProjects }));
       setSavedData({ conversations: validConversations.length, projects: validProjects.length, available: true });
-      setRestoreMessage("Backup do workspace restaurado.");
+      showRestoreMessage("Backup do workspace restaurado.");
     } catch {
-      setRestoreMessage("Não foi possível restaurar este backup.");
+      showRestoreMessage("Não foi possível restaurar este backup.", "error", { label: "Tentar novamente", onClick: () => backupInputRef.current?.click() });
+    } finally {
+      if (backupInputRef.current) backupInputRef.current.value = "";
     }
-    if (backupInputRef.current) backupInputRef.current.value = "";
   }
 
   return (
@@ -171,18 +249,23 @@ export default function SettingsPage() {
           <p>Personalize a interface e os padrões do seu workspace.</p>
         </div>
         <div className="settings-page-header-actions">
-          <span className="settings-save-indicator">
-            <span aria-hidden="true" /> Salvo neste dispositivo
+          <span className="settings-save-indicator" role="status" aria-live="polite" aria-atomic="true">
+            <span aria-hidden="true" /> {preferenceSaveFailed ? "Não foi possível salvar" : "Salvo neste dispositivo"}
           </span>
           <button
             type="button"
             className="settings-reset-button"
-            onClick={() => setPreferences(DEFAULT_PREFERENCES)}
+            onClick={() => {
+              setPreferenceStorageBlocked(false);
+              setPreferences(DEFAULT_PREFERENCES);
+            }}
           >
             Restaurar padrões
           </button>
         </div>
       </section>
+
+      {preferenceStorageBlocked && <FeedbackMessage tone="warning" className="settings-data-note" message="As preferências salvas estão inválidas e foram preservadas. Altere uma preferência, restaure uma cópia válida ou use Restaurar padrões para substituí-las." />}
 
       <div className="settings-page-grid">
         <nav className="settings-page-nav" aria-label="Seções de configuração">
@@ -397,7 +480,7 @@ export default function SettingsPage() {
               <input ref={backupInputRef} className="visually-hidden" type="file" accept="application/json,.json" aria-label="Selecionar cópia do workspace" onChange={(event) => void restoreWorkspaceBackup(event.target.files?.[0])} />
               <button type="button" className="button-secondary" onClick={() => backupInputRef.current?.click()}>Restaurar cópia</button>
             </div>
-            {restoreMessage && <p className="settings-data-note" role="status">{restoreMessage}</p>}
+            {restoreMessage && <FeedbackMessage tone={restoreMessage.tone} className="settings-data-note" message={restoreMessage.message} action={restoreMessage.action} />}
             <p className="settings-data-note">Restauração entre instalações e verificação de atualizações dependem da versão desktop.</p>
           </section>
         </div>
